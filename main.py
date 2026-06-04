@@ -64,6 +64,14 @@ def trust_score(results):
             organic += 1
     return round((organic / len(results)) * 100)
 
+def organic_count(results):
+    count = 0
+    for item in results:
+        desc = item["snippet"].get("description", "")
+        if not is_sponsored(desc):
+            count += 1
+    return count
+
 def format_results(query: str, results, organic_only=False):
     shown_results = filter_results(results, organic_only=organic_only)
 
@@ -98,6 +106,35 @@ def format_results(query: str, results, organic_only=False):
 
     return "\n\n".join(lines)
 
+def format_compare(product1: str, product2: str, results1, results2):
+    score1 = trust_score(results1)
+    score2 = trust_score(results2)
+    organic1 = organic_count(results1)
+    organic2 = organic_count(results2)
+
+    if score1 > score2:
+        winner = product1
+    elif score2 > score1:
+        winner = product2
+    else:
+        winner = "Tie"
+
+    lines = [
+        "⚖️ Product Comparison",
+        f"",
+        f"1️⃣ {product1}",
+        f"📊 Trust Score: {score1}/100",
+        f"✅ Organic Reviews: {organic1}/{len(results1) if results1 else 0}",
+        f"",
+        f"2️⃣ {product2}",
+        f"📊 Trust Score: {score2}/100",
+        f"✅ Organic Reviews: {organic2}/{len(results2) if results2 else 0}",
+        f"",
+        f"🏆 Better trust signal: {winner}",
+    ]
+
+    return "\n".join(lines)
+
 def results_keyboard(query: str):
     return InlineKeyboardMarkup([
         [
@@ -108,11 +145,34 @@ def results_keyboard(query: str):
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
-        "Send me a product name like 'whey protein' and I’ll find YouTube reviews."
+        "Send a product name like 'whey protein'\n"
+        "Or compare two products like:\n"
+        "'compare muscleblaze vs avvatar'"
     )
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.message.text.strip()
+
+    lower_query = query.lower()
+    if lower_query.startswith("compare ") and " vs " in lower_query:
+        compare_text = query[8:]
+        parts = compare_text.split(" vs ", 1)
+
+        if len(parts) == 2:
+            product1 = parts[0].strip()
+            product2 = parts[1].strip()
+
+            results1 = search_youtube(product1)
+            results2 = search_youtube(product2)
+
+            if not results1 or not results2:
+                await update.message.reply_text("Could not compare those products. Try again.")
+                return
+
+            compare_message = format_compare(product1, product2, results1, results2)
+            await update.message.reply_text(compare_message)
+            return
+
     results = search_youtube(query)
 
     if not results:
