@@ -132,7 +132,6 @@ def trust_score(results):
         total += max(0, min(score, 100))
 
     avg_score = total / len(results)
-
     diversity_bonus = min(len(channels) * 5, 15)
     final_score = round(min(avg_score + diversity_bonus, 100))
 
@@ -144,6 +143,15 @@ def trust_verdict(score: int):
     if score >= 45:
         return "Mixed Trust"
     return "Low Trust"
+
+def save_user_search(context: ContextTypes.DEFAULT_TYPE, search_text: str):
+    history = context.user_data.get("history", [])
+    history.insert(0, search_text)
+    history = history[:5]
+    context.user_data["history"] = history
+
+def get_user_history(context: ContextTypes.DEFAULT_TYPE):
+    return context.user_data.get("history", [])
 
 def format_results(query: str, results, organic_only=False):
     shown_results = filter_results(results, organic_only=organic_only)
@@ -230,8 +238,22 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "Send a product name like 'whey protein'\n"
         "Or compare two products like:\n"
-        "'compare muscleblaze vs avvatar'"
+        "'compare muscleblaze vs avvatar'\n\n"
+        "Use /history to see your recent searches."
     )
+
+async def history_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    history = get_user_history(context)
+
+    if not history:
+        await update.message.reply_text("No search history yet.")
+        return
+
+    lines = ["🕘 Your recent searches:"]
+    for i, item in enumerate(history, start=1):
+        lines.append(f"{i}. {item}")
+
+    await update.message.reply_text("\n".join(lines))
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.message.text.strip()
@@ -245,6 +267,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             product1 = parts[0].strip()
             product2 = parts[1].strip()
 
+            save_user_search(context, f"compare {product1} vs {product2}")
+
             results1 = search_youtube(product1)
             results2 = search_youtube(product2)
 
@@ -255,6 +279,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             compare_message = format_compare(product1, product2, results1, results2)
             await update.message.reply_text(compare_message)
             return
+
+    save_user_search(context, query)
 
     results = search_youtube(query)
 
@@ -303,6 +329,7 @@ app = (
 )
 
 app.add_handler(CommandHandler("start", start))
+app.add_handler(CommandHandler("history", history_command))
 app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 app.add_handler(CallbackQueryHandler(handle_buttons))
 
