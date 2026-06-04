@@ -21,15 +21,58 @@ SPONSORED_KEYWORDS = [
     "#sponsored",
     "paid partnership",
     "gifted",
-    "affiliate",
     "sponsored by",
-    "in collaboration",
-    "collab",
+    "promotion by",
+    "brand partner",
+    "brand ambassador",
 ]
+
+AFFILIATE_KEYWORDS = [
+    "affiliate",
+    "affiliate link",
+    "commission",
+    "commissionable",
+    "coupon code",
+    "discount code",
+    "buy now",
+    "shop now",
+    "link in description",
+    "use my code",
+]
+
+TRUST_POSITIVE_KEYWORDS = [
+    "honest review",
+    "lab test",
+    "lab tested",
+    "pros and cons",
+    "real review",
+    "not sponsored",
+    "independent review",
+    "tested",
+    "review after use",
+]
+
+def text_blob(item):
+    snippet = item.get("snippet", {})
+    title = snippet.get("title", "")
+    desc = snippet.get("description", "")
+    channel = snippet.get("channelTitle", "")
+    return f"{title} {desc} {channel}".lower()
+
+def has_any(text: str, keywords):
+    return any(keyword in text for keyword in keywords)
 
 def is_sponsored(text: str) -> bool:
     text = (text or "").lower()
-    return any(word in text for word in SPONSORED_KEYWORDS)
+    return has_any(text, SPONSORED_KEYWORDS)
+
+def has_affiliate_signal(text: str) -> bool:
+    text = (text or "").lower()
+    return has_any(text, AFFILIATE_KEYWORDS)
+
+def has_trust_positive_signal(text: str) -> bool:
+    text = (text or "").lower()
+    return has_any(text, TRUST_POSITIVE_KEYWORDS)
 
 def search_youtube(query: str):
     url = "https://www.googleapis.com/youtube/v3/search"
@@ -49,28 +92,58 @@ def filter_results(results, organic_only=False):
         return results
     filtered = []
     for item in results:
-        desc = item["snippet"].get("description", "")
-        if not is_sponsored(desc):
+        blob = text_blob(item)
+        if not is_sponsored(blob):
             filtered.append(item)
     return filtered
-
-def trust_score(results):
-    if not results:
-        return 0
-    organic = 0
-    for item in results:
-        desc = item["snippet"].get("description", "")
-        if not is_sponsored(desc):
-            organic += 1
-    return round((organic / len(results)) * 100)
 
 def organic_count(results):
     count = 0
     for item in results:
-        desc = item["snippet"].get("description", "")
-        if not is_sponsored(desc):
+        blob = text_blob(item)
+        if not is_sponsored(blob):
             count += 1
     return count
+
+def trust_score(results):
+    if not results:
+        return 0
+
+    total = 0
+    channels = set()
+
+    for item in results:
+        blob = text_blob(item)
+        channel = item.get("snippet", {}).get("channelTitle", "").strip().lower()
+        if channel:
+            channels.add(channel)
+
+        score = 50
+
+        if is_sponsored(blob):
+            score -= 25
+
+        if has_affiliate_signal(blob):
+            score -= 15
+
+        if has_trust_positive_signal(blob):
+            score += 15
+
+        total += max(0, min(score, 100))
+
+    avg_score = total / len(results)
+
+    diversity_bonus = min(len(channels) * 5, 15)
+    final_score = round(min(avg_score + diversity_bonus, 100))
+
+    return final_score
+
+def trust_verdict(score: int):
+    if score >= 75:
+        return "High Trust"
+    if score >= 45:
+        return "Mixed Trust"
+    return "Low Trust"
 
 def format_results(query: str, results, organic_only=False):
     shown_results = filter_results(results, organic_only=organic_only)
@@ -79,7 +152,7 @@ def format_results(query: str, results, organic_only=False):
         return f"🔎 Top results for: {query}\n\nNo organic results found."
 
     score = trust_score(results)
-    verdict = "High Trust" if score >= 70 else "Mixed Trust" if score >= 40 else "Low Trust"
+    verdict = trust_verdict(score)
     mode = "Organic Only" if organic_only else "All Results"
 
     lines = [
@@ -91,14 +164,24 @@ def format_results(query: str, results, organic_only=False):
     for i, item in enumerate(shown_results, start=1):
         title = item["snippet"]["title"]
         channel = item["snippet"]["channelTitle"]
-        desc = item["snippet"].get("description", "")
+        blob = text_blob(item)
         video_id = item["id"]["videoId"]
 
-        label = "Sponsored" if is_sponsored(desc) else "Organic"
+        label = "Sponsored" if is_sponsored(blob) else "Organic"
         emoji = "🚨" if label == "Sponsored" else "✅"
 
+        signal_bits = []
+        if has_trust_positive_signal(blob):
+            signal_bits.append("trust+")
+        if has_affiliate_signal(blob):
+            signal_bits.append("affiliate")
+        if is_sponsored(blob):
+            signal_bits.append("sponsored")
+
+        signal_text = f" [{', '.join(signal_bits)}]" if signal_bits else ""
+
         lines.append(
-            f"{i}. {emoji} {label}\n"
+            f"{i}. {emoji} {label}{signal_text}\n"
             f"{title}\n"
             f"{channel}\n"
             f"https://youtu.be/{video_id}"
@@ -121,15 +204,15 @@ def format_compare(product1: str, product2: str, results1, results2):
 
     lines = [
         "⚖️ Product Comparison",
-        f"",
+        "",
         f"1️⃣ {product1}",
-        f"📊 Trust Score: {score1}/100",
+        f"📊 Trust Score: {score1}/100 ({trust_verdict(score1)})",
         f"✅ Organic Reviews: {organic1}/{len(results1) if results1 else 0}",
-        f"",
+        "",
         f"2️⃣ {product2}",
-        f"📊 Trust Score: {score2}/100",
+        f"📊 Trust Score: {score2}/100 ({trust_verdict(score2)})",
         f"✅ Organic Reviews: {organic2}/{len(results2) if results2 else 0}",
-        f"",
+        "",
         f"🏆 Better trust signal: {winner}",
     ]
 
